@@ -1,259 +1,223 @@
-# 🌊 Unity6 Toon Water Shader
-
-[![Unity](https://img.shields.io/badge/Unity-6-222222?logo=unity)](https://unity.com/)
-[![URP](https://img.shields.io/badge/Pipeline-URP-blue)](https://docs.unity3d.com/Packages/com.unity.render-pipelines.universal@latest)
-[![ShaderLab](https://img.shields.io/badge/Shader-HLSL-965ba5)](#)
-
-卡通渲染风格的高品质水体 Shader，专为 **Unity 6 URP** 构建。支持 Gerstner 波浪、SSR 屏幕空间反射、焦散、SSS 透光、动态泡沫、水面交互等完整特性。
-
 <p align="center">
-  <br>
-  <em>Shader "Custom/ToonWater_Interaction"</em>
+  <img src="docs/images/water-title.svg" width="100%" alt="Toon Water — Unity 6 URP 风格化交互水体">
 </p>
 
----
+<p align="center">
+  从水面光影，到物体入水的一圈波纹。<br>
+  <strong>Gerstner 波浪 · SSR / 探针反射 · GPU 涟漪 · 13 组中文调参</strong>
+</p>
 
-## 📦 文件结构
+<p align="center">
+  <a href="docs/usage.md">开始使用</a> ·
+  <a href="docs/parameters.md">参数参考</a> ·
+  <a href="docs/technical-design.md">技术实现</a> ·
+  <a href="docs/usage.md#常见问题">问题排查</a> ·
+  <a href="docs/roadmap.md">更新方向</a>
+</p>
 
-```
+![当前水体参数下的实际游戏画面](docs/images/water-current.png)
+
+<p align="center"><sub>01 / 当前水面 · 2026-09-24 实拍 · 保留当前材质参数</sub></p>
+
+面向 Unity 6 URP 的风格化水体，组合波浪、折射、焦散、泡沫与交互。当前代码基线为 **Reviewed 2026-09-23**，文档和截图更新于 **2026-09-24**。随包提供当前水材质使用的法线、焦散和泡沫噪声三张贴图；环境模型、环境贴图、预制材质与演示场景不包含在组件包内。
+
+> [!IMPORTANT]
+> 主 Shader：`Custom/ToonWater_Interaction_Reviewed`。请完整导入 Shader、HLSL、Runtime 与 Editor 文件。新版不再依赖旧版 `WaterRippleSimulator` / `WaterRippleEmitter`；只复制主 Shader 无法获得完整反射与交互功能。
+
+## 从这里开始
+
+<table>
+  <tr>
+    <td width="33%" valign="top"><strong>01 · 搭建水面</strong><br><br>准备贴图、配置 URP 与材质，先得到稳定的水面画面。<br><br><a href="docs/usage.md#快速搭建水面">阅读安装步骤 →</a></td>
+    <td width="33%" valign="top"><strong>02 · 接入交互</strong><br><br>绑定模拟器与物体，分别控制入水圈和移动尾波。<br><br><a href="docs/usage.md#让物体与水交互">接入物体涟漪 →</a></td>
+    <td width="33%" valign="top"><strong>03 · 调整风格</strong><br><br>按视觉效果调参，再用诊断视图定位反射、法线和边缘问题。<br><br><a href="docs/usage.md#按顺序调出效果">查看调参顺序 →</a></td>
+  </tr>
+</table>
+
+<details>
+<summary><strong>按问题查找文档</strong></summary>
+
+| 你要做什么 | 阅读位置 |
+|---|---|
+| 从零搭建水面 | [安装与快速开始](docs/usage.md#准备与导入) |
+| 搞清楚每组参数先调谁 | [调参顺序](docs/usage.md#按顺序调出效果) |
+| 让物品入水、移动产生波纹 | [交互接入](docs/usage.md#让物体与水交互) |
+| 调大涟漪、控制触发频率 | [涟漪大小与规则](docs/usage.md#涟漪大小与触发规则) |
+| 查默认值、隐藏字段和单位 | [89 项 Shader 属性及组件参数](docs/parameters.md) |
+| 排查透明边缘、接缝、反射或 Debug | [常见问题](docs/usage.md#常见问题) |
+| 修改代码、评估成本 | [技术文档](docs/technical-design.md) |
+
+</details>
+
+## 特性总览
+
+| 模块 | 当前实现 | 使用边界 |
+|---|---|---|
+| Gerstner 波浪 | 三层解析位移、导数法线、距离细分 | 主要用于水平水面，未自动扩大剔除 bounds |
+| 表面法线 | 双层独立速度、方向校正、RNM 混合 | 提供非无缝贴图接缝补偿，有额外采样成本 |
+| SSR / 探针 | 视空间追踪、交点精化、置信度混合、真实 HDR Mipmap | 屏幕外和遮挡处回退探针；依赖 Renderer Feature |
+| 水色 / 折射 | 深浅染色、水底保留、RGB 色散 | 染色强度与整体可见度分离；屏幕空间近似 |
+| 透明交界 | 带符号深度保护、接触柔化 | 配合项目抗锯齿，仍需动态和远景验收 |
+| 岸边 / 浪尖泡沫 | 深度带、噪声消融、推拉与导数过滤 | 深度梯度只作诊断，未驱动定向泡沫 |
+| 光照 | 焦散、直接 GGX 高光、碎斑、近似透光、边缘泛光 | 保留美术增益，不是完整物理水材质 |
+| 交互涟漪 | 高度 / 速度 RT、固定步长传播、接触事件与尾波 | 不提供浮力、障碍物绕流或网络同步 |
+| 调参 / 调试 | 13 组中文面板、预设、14 个诊断视图 | 普通视图加诊断共 15 个选项；脚本切换需同步关键词 |
+
+## 兼容性与依赖
+
+| 条件 | 状态 |
+|---|---|
+| 已验证组合 | Unity **6000.4.3f1** / URP **17.4** / Windows **D3D12** / **Forward+** |
+| 必需图形能力 | Shader Model 4.6 与曲面细分；涟漪需要 RGFloat RenderTexture |
+| 渲染输入 | 深度、颜色输入，启用 RenderGraph，添加 `WaterReviewColorFeature` |
+| 其他平台 | 移动端、WebGL、XR、其他图形 API 等尚未完整验收 |
+| 构建验证 | 现有证据来自开发工程；干净工程与目标 Player 需要再验证 |
+
+## 文件结构
+
+以下是新版组件与文档的配套目录，保留 `Reviewed` 名称以匹配代码、材质与 Inspector。
+
+<details>
+<summary><strong>展开完整文件结构</strong></summary>
+
+```text
 Unity6_WaterShader/
 ├── README.md
-└── Shader/
-    ├── ToonWater_Interaction.shader    ← 主水体 Shader
-    └── ToonWater_旧水体.shader         ← 旧版参考
+├── Shader/
+│   ├── ToonWater_Interaction_Reviewed.shader
+│   ├── ToonWaterReviewed.hlsl
+│   └── WaterRippleWave.shader
+├── Runtime/
+│   ├── WaterReviewColorFeature.cs
+│   ├── WaterRippleSimulation.cs
+│   └── WaterRippleInteractor.cs
+├── Editor/
+│   ├── ToonWaterReviewedGUI.cs
+│   └── WaterReviewDebugDrawer.cs
+├── Textures/
+│   ├── Water_Normal.tga
+│   ├── T_Caustics06.png
+│   └── FoamNoise_Linear.png
+└── docs/
+    ├── usage.md
+    ├── parameters.md
+    ├── technical-design.md
+    ├── roadmap.md
+    └── images/
 ```
 
-## ✨ 特性总览
+</details>
 
-| 模块 | 说明 |
-|------|------|
-| 🌀 **Gerstner 波浪** | 三层叠加物理波浪 (`WaveA/B/C`)，顶点级位移 + 法线重算 |
-| 🔺 **曲面细分** | 近距离自适应 Tessellation，远距离自动降级 |
-| 🪞 **SSR 屏幕空间反射** | 自适应步长 Ray Marching，支持粗糙度 Mipmap 模糊 |
-| 🔮 **菲涅尔泛光** | 边缘 Fresnel 环境光，可调范围、强度与颜色滤镜 |
-| 🌈 **色散** | RGB 三通道分离偏移，模拟水下折射色差 |
-| ✨ **焦散** | 双层光斑 UV 叠加，取 min 增强锐利度 |
-| 💡 **SSS 透光** | 浪尖半透明透光，模拟次表面散射 |
-| 🌟 **波光碎斑** | 高频 Glint 闪烁，阈值过滤 + 流速控制 |
-| 🫧 **动态泡沫** | 全向海岸线深度梯度检测 + 正弦波浪冲刷 + 浪尖白沫 |
-| 🎮 **水面交互** | RenderTexture 高度场驱动，法线扰动 + 高度位移 |
-| 🔍 **TA 调试** | 12 种 Debug 视图，逐模块排查渲染问题 |
+## 快速开始
 
----
+1. 将 `Shader/`、`Runtime/`、`Editor/`、`Textures/` 及配套 `.meta` 一起放入项目的 `Assets/ToonWater/`，等待编译完成。
+2. 确认项目使用上表验证过的 URP 配置，在 URP Asset 开启 **Depth Texture** 和 **Opaque Texture**。
+3. 给相机实际使用的 Renderer Data 添加 **Water Review Color Feature**；先保持提前绘制透明层为 Nothing。
+4. 创建材质，选 **Custom/ToonWater_Interaction_Reviewed**，赋给水平网格；将材质绑定到 Feature 的 `Water Material`。
+5. 指定所需贴图，关闭“旧吃水线”，整体可见度设 1、Debug 设 None。需要倒影时提高默认值为 0 的总反射强度，并开启 SSR。
+6. 添加 **Water Ripple Simulation**，绑定水 Renderer、材质槽和 **WaterRippleWave.shader**；进入 Play 点击 12 秒涟漪测试。
+7. 给交互物体添加 **Water Ripple Interactor**，绑定模拟器及 Collider，移动物体穿过水面。
 
-## 🖼️ 所需贴图
+完整接线、相机限制和验证步骤见[使用手册](docs/usage.md)。初次验证可采用 4× MSAA + SMAA High，再按目标 GPU 成本调整。
 
-Shader 需要以下 **3 张贴图**，缺一不可：
+## 所需贴图
 
-### 1. 波纹法线贴图 `_NormalMap`
+当前随包贴图来自开发工程水材质的实际引用，保留原始内容、GUID 与导入设置：
 
-| 属性 | 值 |
-|------|-----|
-| 参数名 | `_NormalMap` |
-| 类型 | Normal Map |
-| 默认回退 | `bump`（Unity 内置） |
-| 用途 | 水面波纹法线，控制折射扭曲方向与强度 |
-| 备注 | 双层采样混合，需可平铺。建议 512×512 以上 |
+| 材质属性 | 随包文件 |
+|---|---|
+| `_NormalMap` | `Textures/Water_Normal.tga` |
+| `_CausticsTex` | `Textures/T_Caustics06.png` |
+| `_FoamNoiseTex` | `Textures/FoamNoise_Linear.png` |
 
-### 2. 焦散噪波图 `_CausticsTex`
+法线文件仅缩短文件名；无需修改 Shader。导入已有开发工程时请复用原资源，避免复制相同 GUID。贴图具体导入建议见使用手册。
 
-| 属性 | 值 |
-|------|-----|
-| 参数名 | `_CausticsTex` |
-| 类型 | Texture（RGB） |
-| 默认回退 | `black` |
-| 用途 | 水下光斑焦散图案，投射到水底物体上 |
-| 备注 | 任意焦散风格的平铺图。无贴图时焦散不显示 |
+| 输入 | 准备方式 | 作用 |
+|---|---|---|
+| 法线 | Normal map、Repeat、Mipmap，优先无缝素材 | 细波纹与折射 / 反射扰动 |
+| 焦散 | 可平铺光斑图；强度数据采用线性导入 | 水底动态亮纹；缺省黑时不显示 |
+| 泡沫噪声 | R 通道、Repeat、Mipmap，关闭 sRGB | 泡沫、消融和碎斑形态 |
+| 涟漪状态 | 运行时自动创建 RGFloat RT，无需手填 | R 高度 / G 速度 |
 
-### 3. 泡沫噪波图 `_FoamNoiseTex`
+没有某张美术贴图时可关闭对应效果；并非三张图缺一就无法渲染。接缝补偿只改变采样，不会将原图文件变成无缝素材。
 
-| 属性 | 值 |
-|------|-----|
-| 参数名 | `_FoamNoiseTex` |
-| 类型 | Texture（单通道 R） |
-| 默认回退 | `white` |
-| 用途 | 泡沫边缘不规则形状 + 波光碎斑细节 |
-| 备注 | 影响泡沫形态、海岸线过渡、Glint 分布，非常关键 |
+## 参数模块
 
-### 4. 涟漪高度图（运行时注入） `_RippleTex`
+推荐按 **水色 → 几何波浪 → 法线 → 折射 → 泡沫 → 反射 → 光照 → 涟漪** 调整，避免一次打开全部高亮效果后难以分辨来源。
 
-| 属性 | 值 |
-|------|-----|
-| 参数名 | `_RippleTex` |
-| 类型 | RenderTexture（R8） |
-| 默认回退 | `black` |
-| 用途 | 水面交互系统实时写入的高度场 |
-| 备注 | 由 C# 脚本 `WaterRippleSimulator` 运行时注入，材质面板无需手动设置 |
+<details>
+<summary>展开常用参数速查</summary>
 
----
+| 目的 | 对应参数 |
+|---|---|
+| 整体水面淡出 | `_WaterOpacity` |
+| 调整水底染色 | `_WaterAlpha`、深浅颜色、水底保留 |
+| 改大浪轮廓 | `_WaveA/B/C`、细分距离 |
+| 减少移动方形接缝 | `_NormalSeamBlend`，优先检查源图 |
+| 柔化物体与水交界 | `_ContactSoftness`，默认 0.08 视线深度米 |
+| 控制倒影 | `_SSREnabled`、`_SSRIntensity`、`_ProbeIntensity`、`_SSRRoughness` |
+| 初始入水圈变大 | Interactor 的 `radius`，不是材质法线强度 |
+| 波纹更明显 | `_RippleNormalStrength`、`_RippleCrestStrength` |
+| 尾波更稀疏 | `minInterval`、`wakeSpacing`、`minWakeSpeed` |
 
-## 📋 参数详解
+</details>
 
-### 🔺 Tessellation | 曲面细分
+[查看分组调参说明](docs/usage.md#按顺序调出效果) · [查看所有属性与声明默认值](docs/parameters.md)
 
-| 参数 | 默认值 | 范围 | 说明 |
-|------|--------|------|------|
-| `_TessellationUniform` | `7` | `1 ~ 64` | 细分倍数，越高顶点越密 |
-| `_TessellationMinDist` | `3` | — | 最高精度距离（此范围内满细分） |
-| `_TessellationMaxDist` | `100` | — | 细分消退距离（超过此距离不再细分） |
+## 交互效果与限制
 
-### 🎨 Color | 水体颜色与透明度
-
-| 参数 | 默认值 | 范围 | 说明 |
-|------|--------|------|------|
-| `_ShallowColor` | `(0, 0.45, 0.54)` | HDR | 浅水颜色，岸边/薄水处可见 |
-| `_DeepColor` | `(0, 0.16, 0.49)` | HDR | 深水颜色，深水处渐变为该色 |
-| `_DeepRange` | `16.19` | — | 深水感度，值越小深色来得越快 |
-| `_WaterAlpha` | `1` | `0 ~ 1` | 整体透明度 |
-| `_BottomRetain` | `1` | `0 ~ 1` | 水底纹理保留度，1=完全保留 |
-| `_BottomExposure` | `1` | `1 ~ 5` | 水底亮度补偿 |
-| `_DiffuseContribution` | `0` | `0 ~ 1` | 漫反射光照强度（NdotL） |
-
-### 🌅 Fresnel Glow | 菲涅尔与边缘泛光
-
-| 参数 | 默认值 | 范围 | 说明 |
-|------|--------|------|------|
-| `_FresnelColor` | `(1, 1, 1)` | HDR | 边缘泛光滤镜色 |
-| `_FresnelPower` | `1` | `1 ~ 100` | 反射菲涅尔集中度，越小边缘越宽 |
-| `_GlowReflectionSplit` | `0` | `0 ~ 1` | 泛光与反射分离度 |
-| `_FresnelGlowPower` | `36.8` | `0.1 ~ 50` | 边缘泛光范围集中度 |
-| `_FresnelGlowIntensity` | `1.66` | `0 ~ 10` | 边缘泛光强度 |
-
-### 🌊 Normal | 表面波纹法线
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `_NormalMap` | `bump` | 波纹法线贴图，双 UV 混合采样 |
-| `_NormalScale` | `1` | 波纹凸起强度 |
-| `_NormalSpeed` | `(0.03, 0)` | 波纹流动速度 (XY) |
-
-### 🔮 Distortion | 水下折射与色散
-
-| 参数 | 默认值 | 范围 | 说明 |
-|------|--------|------|------|
-| `_UnderWaterDistort` | `1.57` | — | 水下折射扭曲力 |
-| `_ChromaticAberration` | `0.05` | `0 ~ 5` | 色散强度，RGB 通道分离偏移 |
-
-### ✨ Caustics | 焦散系统
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `_CausticsTex` | `black` | 焦散噪波图 |
-| `_CausticsIntensity` | `3.8` | 焦散亮度 |
-| `_CausticsRange` | `9` | 焦散可见深度，超过此深度焦散淡出 |
-| `_CausticsSpeed1` | `(0.13, 0.07)` | 底层光斑流速 |
-| `_CausticsSpeed2` | `(-0.07, -0.04)` | 表层光斑流速（两者取 min 增强锐度） |
-
-### 🫧 Shore and Foam | 岸边与动态泡沫
-
-| 参数 | 默认值 | 范围 | 说明 |
-|------|--------|------|------|
-| `_EdgeErosion` | `0.527` | `0 ~ 1` | 岸边消融剔除 |
-| `_FoamColor` | `(1, 1, 1)` | HDR | 泡沫颜色 |
-| `_FoamDistance` | `1.33` | — | 泡沫基础宽度（从岸边向内延伸） |
-| `_FoamWaveSpeed` | `1.36` | — | 海浪冲刷速度 |
-| `_FoamWaveFrequency` | `-0.11` | — | 海浪冲刷频次 |
-| `_FoamPushPull` | `0.27` | — | 海浪推拉幅度（泡沫带前后移动） |
-| `_FoamNoiseTex` | `white` | — | 泡沫噪波图（决定泡沫不规则边缘） |
-| `_FoamDissolve` | `0.041` | `0 ~ 1` | 泡沫溶解度，越高泡沫越少 |
-| `_FoamThickness` | `0.066` | `0.01 ~ 0.5` | 泡沫硬边厚度 |
-| `_FoamMaxDepth` | `1.03` | — | 泡沫极限水深，超过不显示泡沫 |
-| `_FoamSpeed` | `(0.01, 0.01)` | — | 泡沫流动速度 (XY) |
-
-### 🌊 Waves | 顶点物理波浪
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `_WaveA` | `(5, 5, 0.15, 10)` | 主波浪 — DirX, DirZ, Steepness, Wavelength |
-| `_WaveB` | `(-2.29, 1, -0.1, 20)` | 副波浪 — 负 Steepness 允许反向 |
-| `_WaveC` | `(4, -4.4, 0.14, 2.89)` | 碎波浪 — 小波长高频率，增加细节 |
-| `_CrestFoamThreshold` | `1.41` | 浪尖起泡高度阈值 |
-| `_CrestFoamStrength` | `9.18` | 浪尖白沫浓度 |
-
-### 💡 SSS & Glints & PBR Specular | 阳光碎斑与透光
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `_SSSColor` | `(0.19, 0.99, 1)` | HDR | 浪尖透光颜色 |
-| `_SSSIntensity` | `4.73` | 透光亮度 |
-| `_SSSPower` | `2.92` | 透光集中度（NdotL 的幂次） |
-| `_SSSDistortion` | `0.043` | `0 ~ 1` | 透光光线偏折 |
-| `_GlintColor` | `(1, 0.89, 0.69)` | HDR | 波光碎斑颜色 |
-| `_GlintScale` | `1` | `1 ~ 50` | 碎斑密集度 |
-| `_GlintThreshold` | `0.506` | `0.1 ~ 1` | 碎斑过滤阈值，越高碎斑越少越集中 |
-| `_GlintStrength` | `14.9` | `1 ~ 50` | 碎斑爆发亮度 |
-| `_GlintSpeed` | `(0.02, 0.02)` | 碎斑流动速度 (XY) |
-| `_PBRSpecularColor` | `(1, 1, 1)` | HDR | PBR 高光颜色 (GGX) |
-| `_PBRSmoothness` | `187` | `10 ~ 1000` | GGX 高光集中度，越高光斑越小 |
-| `_PBRSpecularIntensity` | `0` | `0 ~ 10` | PBR 高光强度 |
-
-### 🪞 SSR V13 | 屏幕空间反射
-
-| 参数 | 默认值 | 范围 | 说明 |
-|------|--------|------|------|
-| `_SSRIntensity` | `0` | `0 ~ 1` | 倒影总透明度 |
-| `_SSRMinReflect` | `0.143` | `0 ~ 1` | 最低反射率（正对水面时的反射） |
-| `_SSRJitter` | `1.87` | `0 ~ 2` | 倒影噪点抖动，减少条带伪影 |
-| `_SSRMaxSteps` | `20` | — | Ray March 最大步进次数，越高越远但越费 |
-| `_SSRBaseStep` | `0.1` | — | 初始步长 |
-| `_SSRAdaptiveStep` | `0.036` | `0 ~ 0.2` | 步长增长率（每步递增），加快远处收敛 |
-| `_SSRBaseThickness` | `0.18` | — | 防穿透容差厚度 |
-| `_SSRRoughness` | `0` | `0 ~ 1` | 倒影粗糙度 → Mipmap 模糊层级 |
-| `_SSRBrightness` | `1.2` | `0 ~ 3` | 倒影亮度 |
-| `_SSRContrast` | `1` | `0.1 ~ 3` | 倒影对比度 |
-| `_SSRWaterPlaneBias` | `0` | `0 ~ 2` | 水面穿透容差，防止倒影穿透水底 |
-
-### 🎛️ Other | 其他
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `_ProbeIntensity` | `0.05` | `0 ~ 5` | 反射探针强度（SSR 失效时的回退） |
-| `_RippleIntensity` | `1` | `0 ~ 5` | 交互涟漪高度强度 |
-| `_RippleNormalStrength` | `0.5` | `0 ~ 2` | 交互涟漪法线扰动强度 |
-| `_DebugMode` | `0` | 枚举 | TA 调试视图切换 |
-
----
-
-## 🐞 Debug 模式速查
-
-| 值 | 显示内容 |
-|----|----------|
-| `0` | 正常渲染（None） |
-| `1` | SSR 倒影 |
-| `2` | 反射探针 |
-| `3` | 混合反射 |
-| `4` | 世界法线 |
-| `5` | 泡沫遮罩 |
-| `6` | 海岸线梯度方向 |
-| `7` | 菲涅尔因子 |
-| `8` | 菲涅尔泛光 |
-| `9` | 菲涅尔泛光因子 |
-| `10` | SSR 粗糙度 LOD |
-| `11` | 涟漪高度图 (R=中心值, G=UV采样值) |
-| `12` | 涟漪法线扰动 |
-
----
-
-## 🚀 快速开始
-
-1. 将 `Shader/` 文件夹复制到 Unity 项目的 `Assets/` 下任意位置
-2. 创建 Material，选择 `Custom/ToonWater_Interaction`
-3. 必须设置三张贴图：**法线贴图**、**焦散噪波图**、**泡沫噪波图**
-4. 将材质赋给水面 Plane / Mesh
-5. SSR 需要开启 `_CameraOpaqueTexture`，URP 中勾选 Opaque Texture
-6. 如需水面交互效果，额外引入 `WaterRippleSimulator` 和 `WaterRippleEmitter` C# 脚本
-
----
-
-## ⚙️ 依赖
-
-- Unity 6+
-- Universal Render Pipeline (URP)
-- `_CameraOpaqueTexture`（SSR 倒影必需）
-- `_CameraDepthTexture`（自动启用）
-
----
+### 实际使用 · 亮边 0.02
 
 <p align="center">
-  Made with ❤️ for Unity URP
+  <img src="docs/images/ripple-practical-002.png" width="798" alt="亮边强度 0.02 的涟漪实际使用效果，作者选图">
 </p>
+
+<p align="center"><sub>02 / 涟漪实际效果 · 波峰亮边 0.02 · 作者选图</sub></p>
+
+低亮边主要保留法线、折射和倒影扰动，让涟漪融入水面。上图为作者提供的实际效果截图，保留原始画面。
+
+<details>
+<summary><strong>查看高强度诊断预览，区分测试圈与实际交互</strong></summary>
+
+![高强度涟漪可见性测试](docs/images/ripple-preview.png)
+
+*高强度可见性预览：半径 1.8 米、力度 6 的固定测试圈。亮边可降低或关闭，实际物体使用各自的半径与力度。*
+
+该图是此前的诊断截图，材质参数与当前实拍不同，不作为相同条件下的前后对比。
+
+</details>
+
+物体接触、中心穿越、离开接触带都可能产生脉冲；贴水移动满足速度、间隔和距离门槛后产生尾波。一次完整入水可能有多个脉冲，当前没有“一次性 / 持续 / 冲击力阈值”模式选择。静止物体可能被大波浪重新触发接触。
+
+## Debug 与问题排查
+
+先确认“正常渲染 / None”和整体可见度；排查时推荐 **4 法线 → 11 涟漪高度 → 12 涟漪梯度 → 2 探针 → 13 SSR 置信度**。模式列表与脚本切换示例见[调试模式](docs/usage.md#调试模式)。
+
+- **有锯齿：** 分清物体轮廓白边、消融缺口和高频闪烁，分别检查柔化 / 深度、消融噪声和抗锯齿。
+- **没涟漪：** 先检查 Play 与模拟器“已就绪”，再点固定预览，最后检查真实物体绑定。
+- **没倒影：** 总反射强度默认 0；检查 Feature、深度、关键词和探针。
+- **CPU 间歇尖峰：** 在 Profiler 定位线程和调用层级，不能仅凭画面断定由水体造成。
+
+## 后续更新方向
+
+> [!NOTE]
+> 以下为计划方向，尚未完成，暂不承诺发布日期。当前可用功能以使用手册为准。
+
+| 顺序 | 方向 | 目标 |
+|---|---|---|
+| **01** | **吃水线** | 统一波浪高度与交界判断，改善相机半入水和物体穿水时的连续性 |
+| **02** | **水下效果** | 深度吸收、雾化、水下色调与上下水切换，让水面上下的表现衔接 |
+| **03** | **浮力** | 基于水面高度和法线的多点浮力、阻尼与水阻，使物体随波漂浮 |
+| **04** | **粒子特效** | 入水水花、出水滴落、移动尾迹与气泡，与同一交互事件联动 |
+
+[查看实施范围、依赖与验收目标 →](docs/roadmap.md)
+
+## 技术与已知边界
+
+实现公式、帧内顺序、资源生命周期、成本和未完成审查项见[技术文档](docs/technical-design.md)。现有局限包括位移 bounds 未自动扩展、旧水下高度链未统一、浪尖阈值算法待重构，以及屏幕空间反射与透明排序的固有限制。
+
+水体表现思路受 **AKUMA-Zhang** 的风格化水体启发；Gerstner 与 GGX 等基础方法沿用原项目的学习脉络。感谢原项目作者与相关图形学资料。
+
+---
+
+<p align="center"><sub>Unity 6 · URP · Reviewed Water</sub><br><a href="docs/usage.md">使用手册</a> · <a href="docs/technical-design.md">实现原理</a> · <a href="docs/roadmap.md">后续更新</a></p>
